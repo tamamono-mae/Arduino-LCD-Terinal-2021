@@ -1,2 +1,2 @@
-# Arduino-LCD-Terinal-2021.ino
+# Arduino-LCD-Terinal-2021
 A UART terminal using LCD
