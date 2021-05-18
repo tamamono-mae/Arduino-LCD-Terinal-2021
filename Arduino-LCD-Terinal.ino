@@ -1,19 +1,21 @@
-#define PhyPortbit7 11
-#define PhyPortbit6 10
-#define PhyPortbit5 9
-#define PhyPortbit4 8
-#define PhyPortbit3 7
-#define PhyPortbit2 6
-#define PhyPortbit1 5
-#define PhyPortbit0 4
 #define D_I 2
 #define EN_pin 3
+#define PhyPortbit0 4
+#define PhyPortbit1 5
+#define PhyPortbit2 6
+#define PhyPortbit3 7
+
+#define PhyPortbit4 8
+#define PhyPortbit5 9
+#define PhyPortbit6 10
+#define PhyPortbit7 11
 #define ChipSlectL 12
 #define ChipSlectR 13
-#define CommitDelay 0.5
 
-uint8_t cursorX = 4, cursorY = 0, DispSL = 0, VirtualPort = 0; // X max = 59, Y max = 7
-bool CurrentChip = 0, IsBottomLine = 0, IsTopLine = 1, IsFirstChar = 1, IsLastestChar = 0;
+#define CommitDelay 0.5
+#define vHighTime 0.5
+#define vLowTime 0.5
+#define writeTime 0.5
 
 uint8_t BitmapFont[] = {
 	//ASCII table - 32
@@ -114,276 +116,399 @@ uint8_t BitmapFont[] = {
 	0x08, 0x04, 0x08, 0x10, 0x08	//~
 };
 
-void commitLCD(){
+class cursor{ //cursor on memory
+	public:
+		uint8_t x = 0; //[0..19]
+		uint8_t y = 0; //[0..7]
 
-	digitalWrite(PhyPortbit0, VirtualPort & 0x01);
-	digitalWrite(PhyPortbit1, (VirtualPort & 0x02) >> 1);
-	digitalWrite(PhyPortbit2, (VirtualPort & 0x04) >> 2);
-	digitalWrite(PhyPortbit3, (VirtualPort & 0x08) >> 3);
-	digitalWrite(PhyPortbit4, (VirtualPort & 0x10) >> 4);
-	digitalWrite(PhyPortbit5, (VirtualPort & 0x20) >> 5);
-	digitalWrite(PhyPortbit6, (VirtualPort & 0x40) >> 6);
-	digitalWrite(PhyPortbit7, (VirtualPort & 0x80) >> 7);
-
-	digitalWrite(EN_pin, 0);
-	delay(CommitDelay);
-	digitalWrite(EN_pin, 1);
-	delay(CommitDelay);
-}
-
-void DisplayToggle(bool state){
-	digitalWrite(D_I, 0);
-	VirtualPort = 0x3E | state;
-	commitLCD();
-}
-
-void DisplayStartLine(uint8_t Dsl){
-	digitalWrite(D_I, 0);
-	VirtualPort = 0xC0 | Dsl;
-	commitLCD();
-}
-
-void PageAddressSet(uint8_t page){
-	digitalWrite(D_I, 0);
-	VirtualPort = 0xB8 | page;
-	commitLCD();
-}
-
-void SetAddress(uint8_t addr){
-	digitalWrite(D_I, 0);
-	VirtualPort = 0x40 | addr;
-	commitLCD();
-}
-
-void WriteDisplayData(uint8_t data){
-	digitalWrite(D_I, 1);
-	VirtualPort = data;
-	//VirtualPort = ~data;	//Dark Mode
-	commitLCD();
-}
-
-void DispInit(void){
-	//Display Initalization
-	digitalWrite(D_I, 0);
-	digitalWrite(EN_pin, 1);
-	digitalWrite(ChipSlectL, 1);
-	digitalWrite(ChipSlectR, 1);
-	DisplayToggle(0);
-	DisplayStartLine(0);
-	SetAddress(0);
-	PageAddressSet(0);
-	//Clear Screen
-	DisplayToggle(1);
-	digitalWrite(ChipSlectR, 0);
-	unsigned int i,j;
-	digitalWrite(ChipSlectL, 1);
-	digitalWrite(ChipSlectR, 1);
-	for(i=0; i<8; i++){
-		for(j=0; j<64; j++){
-			PageAddressSet(i);
-			SetAddress(j);
-			WriteDisplayData(0x00);
+		void reset(void){
+			x = 0;
+			y = 0;
+		};
+		void printChar(void){
+			x++;
+			cursorHandle();
 		}
-	}
-	//Reset parameter
-	cursorX = 4; cursorY = 0; CurrentChip = 0; DispSL = 0;
-	IsBottomLine = 0; IsTopLine = 1; IsFirstChar = 1; IsLastestChar = 0;
-
-}
-
-uint8_t printChar(uint8_t addr, uint8_t X, uint8_t Y, bool C){
-	uint8_t i;
-	unsigned int RealAddr = addr *5;
-	digitalWrite(ChipSlectL, !C);
-	digitalWrite(ChipSlectR, C);
-	PageAddressSet(Y);
-	for(i=0; i<5; i++){
-		SetAddress(X);
-		WriteDisplayData(BitmapFont[RealAddr+i]);
-		X++;
-	}
-	WriteDisplayData(0x00);
-	X++;
-	return X;
-}
-
-uint8_t delChar(uint8_t X, uint8_t Y, bool C){
-	uint8_t i;
-	digitalWrite(ChipSlectL, !C);
-	digitalWrite(ChipSlectR, C);
-	PageAddressSet(Y);
-	for(i=0; i<6; i++){
-		SetAddress(X);
-		WriteDisplayData(0x00);
-		X++;
-	}
-	return X += -6;
-}
-
-void eraseLine(uint8_t Y){
-	uint8_t i;
-	digitalWrite(ChipSlectL, 1);
-	digitalWrite(ChipSlectR, 1);
-	PageAddressSet(Y);
-	for(i=0; i<64; i++){
-		SetAddress(i);
-		WriteDisplayData(0x00);
-	}
-}
-
-void CursorProcess(void){
-
-	DispSL += (IsBottomLine & IsLastestChar);
-	if(DispSL > 7) DispSL = 0;
-	digitalWrite(ChipSlectL, 1);	digitalWrite(ChipSlectR, 1);
-	DisplayStartLine(DispSL << 3);
-
-	cursorY += IsLastestChar;
-	if(cursorY > 7) cursorY = 0;
-	if (IsLastestChar) eraseLine(cursorY);
-
-	if(cursorX >= 59){
-		cursorX = CurrentChip << 2;
-		CurrentChip = !CurrentChip;
-		//cursorX = 4*(!CurrentChip);
-	}
-}
-
-void CursorBackProcess(void){
-
-	//If !IsTopLine and IsFirstChar and cursorY > 0, Do
-	//Else if !IsTopLine and IsFirstChar, cursorY = 7;
-	if(cursorY > 0) cursorY += -((!IsTopLine) && IsFirstChar);
-	else cursorY = 7*((!IsTopLine) && IsFirstChar);
-
-	if(cursorX < 5){
-		cursorX = 60 + 4*(CurrentChip);
-		CurrentChip = !CurrentChip;
-		//cursorX = 4*(!CurrentChip);
-	}
-	cursorX += -6;
-}
-
-void StatusUpdate(void){
-
-	IsFirstChar = ((cursorX < 10) && (!CurrentChip));
-	IsLastestChar = (cursorX >= 59) && (CurrentChip);
-	IsTopLine = (DispSL == cursorY);
-	IsBottomLine = (cursorY - DispSL == 7) || (DispSL - cursorY == 1);
-
-}
-
-/*
-void SerialDebug(void){
-	Serial.print("cursorX = "); Serial.println(cursorX);
-	Serial.print("cursorY = "); Serial.println(cursorY);
-	Serial.print("CurrentChip = "); Serial.println(CurrentChip);
-	Serial.print("DispSL = "); Serial.println(DispSL);
-	Serial.print("IsFirstChar = "); Serial.println(IsFirstChar);
-	Serial.print("IsLastestChar = "); Serial.println(IsLastestChar);
-	Serial.print("IsTopLine = "); Serial.println(IsTopLine);
-	Serial.print("IsBottomLine = "); Serial.println(IsBottomLine);
-
-}
-*/
-
-void SerialProcess(void){
-	if (Serial.available() > 0) {
-		uint8_t SerialData = Serial.read();
-		StatusUpdate();
-		if (SerialData >= 32) cursorX = printChar((SerialData-32), cursorX, cursorY, CurrentChip);
-
-		else{
-			switch (SerialData){
-				case 8:	//Backspace
-					if(!(IsFirstChar && IsTopLine)){
-						CursorBackProcess();
-						delChar(cursorX, cursorY, CurrentChip);
-					}
-					break;
-				/*
-				case 9:	//Tab
-					DispInit();
-					break;
-				*/
-				case 12:	//Ctrl + L
-					DispInit();
-					break;
-				case 13:	//Enter
-					cursorX = 4; CurrentChip = 0;
-					if (DispSL < 7) DispSL += IsBottomLine;
-					else if (IsBottomLine) DispSL = 0;
-					if (cursorY < 7) cursorY ++;
-					else cursorY = 0;
-					eraseLine(cursorY);
-					break;
-				case 27:	//Esc
-					int8_t CommandData[3];
-					uint8_t i = 0;
-					//Serial.println("Case Esc");
-					//if (Serial.available() > 0) CommandData = Serial.read();
-					do{
-						if (Serial.available() > 0){
-							CommandData[i] = Serial.read();
-							i++;
-							//Serial.println(i);
-						}
-					}while(i<2);
-
-					//Serial.println(CommandData[1]);
-
-					switch (CommandData[1]){
-						case 50:	//2
-							do{
-								if (Serial.available() > 0){
-								CommandData[i] = Serial.read();
-								i++;
-								//Serial.println(i);
-								}
-							}while(i<3);
-							//if (Serial.available() > 0)
-							//if(Serial.read() == 74) DispInit();
-							if (CommandData[2] == 74) DispInit();
-							break;
-						case 65:	//Up
-							if (cursorY > 0) cursorY += -(!IsTopLine);
-							else cursorY = 7*(!IsTopLine);
-							break;
-						case 66:	//Down
-							if (cursorY < 7) cursorY += !IsBottomLine;
-							else if (!IsBottomLine) cursorY = 0;
-							break;
-						case 67:	//Right
-							if (cursorX < 57) cursorX += 6*(!IsLastestChar);
-							else if (!(IsLastestChar || CurrentChip)){
-								cursorX = 0;
-								CurrentChip = 1;
-							}
-							break;
-						case 68:	//Left
-							if (cursorX > 5) cursorX += -6*(!IsFirstChar);
-							else if (!(IsFirstChar || (!CurrentChip))){
-								cursorX = 58;
-								CurrentChip = 0;
-							}
-							break;
-						case 69:	//E
-							DispInit();
-							break;
-						default:
-							delay(1);
-					}
-					break;
-				default:
-					delay(1);
+		void crlf(void){ //return
+			x = 0;
+			y++;
+			cursorHandle();
+		}
+		void del(void){
+			if(x > 0){
+				x+= -1;
+				return;
+			}
+			x = 19;
+			y = (y == 0) ? 7 : (y - 1);
+		}
+		void next(void){
+			if(x < 19){
+				x++;
+				cursorHandle();
 			}
 		}
-		StatusUpdate();
-		CursorProcess();
-		//SerialDebug();
+		void previous(void){
+			if(x > 0){
+				x+= -1;
+				cursorHandle();
+			}
+		}
+		void up(void){
+			if (y > 0) {
+				y+= -1;
+				cursorHandle();
+				return;
+			};
+			y = 7;
+		}
+		void down(void){
+			y++;
+			cursorHandle();
+		}
+	private:
+		void cursorHandle(void){
+			if (x > 19) {
+				x = 0; y++;
+			}
+			if (y > 7) {
+				y = 0;
+			}
+		};
+
+};
+
+class display{
+	public:
+		void oNoFF(bool d){
+			PORTD = ((0x0E | d) << 4) | 0x08 | (PORTD & 0x03);
+			PORTB = (PORTB & 0xC0) | 0x33; // ChipSlectL = ChipSlectR = true
+			PORTD = PORTD ^ 0x08; //toggle EN_pin
+			delay(vLowTime);
+			PORTD = PORTD ^ 0x08;
+			delay(vHighTime);
+		}
+		void displayStartLine(uint8_t *dSL){
+			//digitalWrite(D_I, 0);
+			uint8_t data = 0xC0 | *dSL;
+			//writeData(&data);
+			PORTD = ((data & 0x0F) << 4) | 0x08 | (PORTD & 0x03);
+			PORTB = (PORTB & 0xF0) | ((data & 0xF0) >> 4);
+			//0x08 => 00001000 D_I = 0; EN = 1;
+			PORTD = PORTD ^ 0x08; //toggle EN_pin
+			delay(vLowTime);
+			PORTD = PORTD ^ 0x08;
+			delay(vHighTime);
+		}
+
+		void pageAddressSet(uint8_t *page){
+			//digitalWrite(D_I, 0);
+			uint8_t data = 0xB8 | *page;
+			//writeData(&data);
+			PORTD = ((data & 0x0F) << 4) | 0x08 | (PORTD & 0x03);
+			PORTB = (PORTB & 0xF0) | ((data & 0xF0) >> 4);
+			//0x08 => 00001000 D_I = 0; EN = 1;
+			PORTD = PORTD ^ 0x08; //toggle EN_pin
+			delay(vLowTime);
+			PORTD = PORTD ^ 0x08;
+			delay(vHighTime);
+		}
+
+		void columnAddressSet(uint8_t *addr){
+			//digitalWrite(D_I, 0);
+			uint8_t data = 0x40 | *addr;
+			//writeData(&data);
+			PORTD = ((data & 0x0F) << 4) | 0x08 | (PORTD & 0x03);
+			PORTB = (PORTB & 0xF0) | ((data & 0xF0) >> 4);
+			//0x08 => 00001000 D_I = 0; EN = 1;
+			PORTD = PORTD ^ 0x08; //toggle EN_pin
+			delay(vLowTime);
+			PORTD = PORTD ^ 0x08;
+			delay(vHighTime);
+		}
+
+		void writeDisplayData(uint8_t *data){
+			PORTD = ((*data & 0x0F) << 4) | 0x0C | (PORTD & 0x03);
+			PORTB = (PORTB & 0xF0) | ((*data & 0xF0) >> 4);
+			//0x0C => 00001100 D_I = 1; EN = 1;
+			PORTD = PORTD ^ 0x08; //toggle EN_pin
+			delay(vLowTime);
+			PORTD = PORTD ^ 0x08;
+			delay(writeTime);
+		}
+
+		void chipSelect(bool l, bool r){
+			PORTB = (PORTB & 0xCF) | (l << 4) | (r << 5);
+		}
+
+		void chipSelectHold(void){
+			selectHold = (PORTB & 0x30) >> 4;
+		}
+
+		void chipSelectRelease(void){
+			PORTB = (PORTB & 0xCF) | (selectHold << 4);
+		}
+
+	private:
+		char selectHold;
+};
+
+class displayHandler{
+	public:
+		uint8_t charDSL = 0; //Display Start Line [0..7]
+		uint8_t dSL = 0;
+		/*
+		001 11111
+		chipSlect columnAddress
+		*/
+		bool isFirstChar = true;
+		bool isLastestChar = false;
+		bool isTopLine = false;
+		bool isBottomLine = false;
+		bool chipSlect = false;
+
+		void init(cursor *cursor, display *display){
+			display->oNoFF(false);
+			display->chipSelect(true, true);
+			uint8_t j;
+			for(uint8_t i=0;i<8;i++){
+				display->pageAddressSet(&i);
+				display->columnAddressSet(&value_zero);
+				for(j=0; j<64; j++){
+					display->writeDisplayData(&value_zero);
+				}
+			}
+			display->oNoFF(true);
+			display->columnAddressSet(&value_zero);
+			display->pageAddressSet(&value_zero);
+			display->displayStartLine(&value_zero);
+			display->chipSelect(true, false);
+			display->columnAddressSet(&value_four);
+			cursor->reset();
+			dSL = 0;
+			charDSL = 0;
+			isFirstChar = true;
+			isLastestChar = false;
+			isTopLine = false;
+			isBottomLine = false;
+			chipSlect = false;
+		}
+
+		void positionUpdate(cursor *cursor){
+			if(charDSL > 7) charDSL = 0;
+			isFirstChar = cursor->x == 0 || cursor->x == 10;
+			isLastestChar = cursor->x == 9 || cursor->x == 19;
+			isTopLine = (cursor->y == charDSL);
+			isBottomLine = (cursor->y - charDSL == 7) || (charDSL - cursor->y == 1);
+		}
+
+		void crlf(cursor *cursor, display *display){
+			charDSL+= isBottomLine; //因時常發生isBottomLine故不做整合
+			cursor->crlf();
+			positionUpdate(cursor);
+			display->chipSelect(true, true); //二個螢幕有不同的col, page, dSL值，需同步操作
+			display->columnAddressSet(&value_zero);
+			display->pageAddressSet(&(cursor->y));
+			dSL = charDSL << 3; //charDSL*8
+			display->displayStartLine(&dSL);
+			for(uint8_t i=0; i<64; i++){
+				display->writeDisplayData(&value_zero);
+			}
+			display->columnAddressSet(&value_zero);
+			display->chipSelect(true, false);
+			display->columnAddressSet(&value_four);
+		}
+
+		void printChar(cursor *cursor, display *display, uint8_t *data){
+			for(uint8_t i=0;i<5;i++){
+				display->writeDisplayData(data);
+				data++;
+			}
+			display->writeDisplayData(&value_zero);
+			if(cursor->x == 19){
+				crlf(cursor, display);
+				positionUpdate(cursor);
+				return;
+			}
+			if(isLastestChar)
+				display->chipSelect(false, true);
+			cursor->printChar();
+			positionUpdate(cursor);
+		}
+
+		void del(cursor *cursor, display *display){
+			if((cursor->x == 0) && isTopLine) return;
+			if(cursor->x == 0){	// 換行特例
+				display->chipSelect(true, true);
+				cursor->del();
+				display->pageAddressSet(&(cursor->y));
+				display->chipSelect(false, true);
+				display->columnAddressSet(&value54);
+				for(uint8_t i=0;i<6;i++)
+					display->writeDisplayData(&value_zero);
+				display->columnAddressSet(&value54);
+				positionUpdate(cursor);
+				return;
+			}
+			if(cursor->x == 10)
+				display->chipSelect(true, false);
+			cursor->del();
+			uint8_t columnAddress = ((cursor->x)%10)*6 + ((cursor->x < 10) << 2);
+			display->columnAddressSet(&columnAddress);
+			for(uint8_t i=0;i<6;i++)
+				display->writeDisplayData(&value_zero);
+			display->columnAddressSet(&columnAddress);
+			positionUpdate(cursor);
+		}
+
+		void up(cursor *cursor, display *display){
+			if (isTopLine) return;
+			cursor->up();
+			positionUpdate(cursor);
+			display->chipSelectHold();
+			display->chipSelect(true, true);
+			display->pageAddressSet(&(cursor->y));
+			display->chipSelectRelease();
+		}
+
+		void down(cursor *cursor, display *display){
+			if (isBottomLine) return;
+			cursor->down();
+			positionUpdate(cursor);
+			display->chipSelectHold();
+			display->chipSelect(true, true);
+			display->pageAddressSet(&(cursor->y));
+			display->chipSelectRelease();
+		}
+
+		void left(cursor *cursor, display *display){
+			if (cursor->x == 0) return;
+			if (isFirstChar){
+				display->chipSelect(true, false);
+				cursor->previous();
+				positionUpdate(cursor);
+				display->columnAddressSet(&value58);
+				return;
+			}
+			cursor->previous();
+			positionUpdate(cursor);
+			uint8_t columnAddress = ((cursor->x)%10)*6 + ((cursor->x < 10) << 2);
+			display->columnAddressSet(&columnAddress);
+		}
+
+		void right(cursor *cursor, display *display){
+			if (cursor->x == 19) return;
+			if (isLastestChar){
+				display->chipSelect(false, true);
+				cursor->next();
+				positionUpdate(cursor);
+				display->columnAddressSet(&value54);
+				return;
+			}
+			cursor->next();
+			positionUpdate(cursor);
+			uint8_t columnAddress = ((cursor->x)%10)*6 + ((cursor->x < 10) << 2);
+			display->columnAddressSet(&columnAddress);
+		}
+
+	private:
+		uint8_t value_zero = 0;
+		uint8_t value_four = 4;
+		uint8_t value54 = 54;
+		uint8_t value58 = 58;
+		/*
+		void cursorMapping(cursor *cursor){
+			columnAddress = (cursor->x)*5;
+			pageAddress = ((cursor->y) + charDSL) % 8;
+		}
+		*/
+};
+
+cursor cursor;
+display display;
+displayHandler dH;
+
+/*                      ______________
+											 |              |
+ANSI character     =>  |  Translator  | =>  display commands
+command character  =>  |______________|
+
+action =>	charCursor(offset) => displayCursor(offset) => displayCommands
+
+*/
+
+void SerialHandler(void){
+	if (Serial.available() > 0) {
+		uint8_t SerialData = Serial.read();
+		if (SerialData == 127){
+			dH.del(&cursor, &display);
+			return;
+		}
+		if (SerialData >= 32){
+			dH.printChar(&cursor, &display, &BitmapFont[(SerialData-32)*5]);
+			return;
+		}
+
+		//Serial.println(SerialData);
+		switch (SerialData){
+			case 8:	//Backspace
+				dH.del(&cursor, &display);
+				break;
+			case 12:	//Ctrl + L
+				dH.init(&cursor, &display);
+				break;
+			case 13:	//Return
+				dH.crlf(&cursor, &display);
+				break;
+			case 27:	//Esc
+				uint8_t dataBuffer[3];
+				uint8_t i = 0;
+				//Serial.println("Case Esc");
+				//if (Serial.available() > 0) CommandData = Serial.read();
+				do{
+					if (Serial.available() > 0){
+						dataBuffer[i] = Serial.read();
+						i++;
+						//Serial.println(i);
+					}
+				}while(i<2);
+
+				//Serial.println(CommandData[1]);
+
+				switch (dataBuffer[1]){
+					case 50:	//2
+						do{
+							if (Serial.available() > 0){
+							dataBuffer[i] = Serial.read();
+							i++;
+							//Serial.println(i);
+							}
+						}while(i<3);
+						//if (Serial.available() > 0)
+						//if(Serial.read() == 74) DispInit();
+						if (dataBuffer[2] == 74)
+							dH.init(&cursor, &display);
+						break;
+					case 65:	//Up
+						dH.up(&cursor, &display);
+						break;
+					case 66:	//Down
+						dH.down(&cursor, &display);
+						break;
+					case 67:	//Right
+						dH.right(&cursor, &display);
+						break;
+					case 68:	//Left
+						dH.left(&cursor, &display);
+						break;
+					case 69:	//E
+						dH.init(&cursor, &display);
+						break;
+				}
+				break;
+		}
 	}
 }
-
 
 void setup(){
 	// set the data rate for the SoftwareSerial port
@@ -400,16 +525,12 @@ void setup(){
 	pinMode(PhyPortbit2, OUTPUT);
 	pinMode(PhyPortbit1, OUTPUT);
 	pinMode(PhyPortbit0, OUTPUT);
-	DispInit();
+	dH.init(&cursor, &display);
 	//Serial.println("Hello, world?");
+
 }
 
 void loop() // run over and over
 {
-	//Serial.available();
-	//Serial.read();
-	//Serial.write("aaaa");
-	//CLRDisplay();
-	SerialProcess();
-
+	SerialHandler();
 }
